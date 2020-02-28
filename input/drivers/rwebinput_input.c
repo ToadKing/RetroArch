@@ -484,10 +484,12 @@ static bool rwebinput_is_pressed(rwebinput_input_t *rwebinput,
          if (port == 0 && !!rwebinput_mouse_state(&rwebinput->mouse,
                   bind->mbutton, false))
             return true;
-         if ((uint16_t)joykey != NO_BTN && rwebinput->joypad->button(joypad_info->joy_idx, (uint16_t)joykey))
-            return true;
-         if (((float)abs(rwebinput->joypad->axis(joypad_info->joy_idx, joyaxis)) / 0x8000) > joypad_info->axis_threshold)
-            return true;
+         if (rwebinput->joypad) {
+            if ((uint16_t)joykey != NO_BTN && rwebinput->joypad->button(joypad_info->joy_idx, (uint16_t)joykey))
+               return true;
+            if (((float)abs(rwebinput->joypad->axis(joypad_info->joy_idx, joyaxis)) / 0x8000) > joypad_info->axis_threshold)
+               return true;
+         }
       }
    }
 
@@ -551,7 +553,7 @@ static int16_t rwebinput_input_state(void *data,
             int16_t ret = rwebinput_analog_pressed(
                   rwebinput, joypad_info, binds[port],
                   idx, id);
-            if (!ret && binds[port])
+            if (!ret && binds[port] && rwebinput->joypad)
                ret = input_joypad_analog(rwebinput->joypad, joypad_info, port,
                      idx, id, binds[port]);
             return ret;

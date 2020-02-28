@@ -16390,7 +16390,7 @@ static const input_device_driver_t *input_joypad_init_first(void *data)
 
    for (i = 0; joypad_drivers[i]; i++)
    {
-      if (joypad_drivers[i]->init(data))
+      if (joypad_drivers[i]->init && joypad_drivers[i]->init(data))
       {
          RARCH_LOG("[Joypad]: Found joypad driver: \"%s\".\n",
                joypad_drivers[i]->ident);
