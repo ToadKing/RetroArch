@@ -69,6 +69,9 @@ void fifo_read(fifo_buffer_t *buffer, void *in_buf, size_t size)
    size_t first_read = size;
    size_t rest_read  = 0;
 
+   if (size == 0)
+      return;
+
    if (buffer->first + size > buffer->size)
    {
       first_read = buffer->size - buffer->first;

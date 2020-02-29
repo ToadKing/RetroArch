@@ -1,168 +1,90 @@
 //"use strict";
 
 var LibraryRWebAudio = {
-   $RA__deps: ['$Browser'],
    $RA: {
-      BUFFER_SIZE: 2048,
+      numInstances: 0,
+      instances: {},
 
-      context: null,
-      buffers: [],
-      numBuffers: 0,
-      bufIndex: 0,
-      bufOffset: 0,
-      startTime: 0,
-      nonblock: false,
-      currentTimeWorkaround: false,
+      onaudioprocess: function(instance, audioProcessingEvent) {
+         var outputBuffer = audioProcessingEvent.outputBuffer;
+         var readSamples = {{{ makeDynCall('iiii') }}}(instance.callback, instance.audioProcessBuffer, instance.scriptProcessorNode.bufferSize, instance.userdata);
 
-      setStartTime: function() {
-         if (RA.context.currentTime) {
-            RA.startTime = window['performance']['now']() - RA.context.currentTime * 1000;
-            Module["resumeMainLoop"]();
-         } else window['setTimeout'](RA.setStartTime, 0);
-      },
-
-      getCurrentPerfTime: function() {
-         if (RA.startTime) return (window['performance']['now']() - RA.startTime) / 1000;
-         else return 0;
-      },
-
-      process: function(queueBuffers) {
-         var currentTime = RA.getCurrentPerfTime();
-         for (var i = 0; i < RA.bufIndex; i++) {
-            if (RA.buffers[i].endTime !== 0 && RA.buffers[i].endTime < currentTime) {
-               RA.buffers[i].endTime = 0;
-               var buf = RA.buffers.splice(i, 1);
-               RA.buffers[RA.numBuffers - 1] = buf[0];
-               i--;
-               RA.bufIndex--;
-            }
-         }
-      },
-
-      fillBuffer: function(buf, samples) {
-         var count = 0;
-         const leftBuffer = RA.buffers[RA.bufIndex].getChannelData(0);
-         const rightBuffer = RA.buffers[RA.bufIndex].getChannelData(1);
-         while (samples && RA.bufOffset !== RA.BUFFER_SIZE) {
-            leftBuffer[RA.bufOffset] = {{{ makeGetValue('buf', 'count * 8', 'float') }}};
-            rightBuffer[RA.bufOffset] = {{{ makeGetValue('buf', 'count * 8 + 4', 'float') }}};
-            RA.bufOffset++;
-            count++;
-            samples--;
+         if (outputBuffer.numberOfChannels != 2) {
+            throw new Error("outputBuffer.numberOfChannels not 2!");
          }
 
-         return count;
-      },
+         var left = outputBuffer.getChannelData(0);
+         var right = outputBuffer.getChannelData(1);
 
-      queueAudio: function() {
-         var index = RA.bufIndex;
-
-         var startTime;
-         if (RA.bufIndex) startTime = RA.buffers[RA.bufIndex - 1].endTime;
-         else startTime = RA.context.currentTime;
-         RA.buffers[index].endTime = startTime + RA.buffers[index].duration;
-
-         const bufferSource = RA.context.createBufferSource();
-         bufferSource.buffer = RA.buffers[index];
-         bufferSource.connect(RA.context.destination);
-         bufferSource.start(startTime);
-
-         RA.bufIndex++;
-         RA.bufOffset = 0;
-      },
-
-      block: function() {
-         do {
-            RA.process();
-         } while (RA.bufIndex === RA.numBuffers);
-      }
-   },
-
-   RWebAudioInit: function(latency) {
-      var ac = window['AudioContext'] || window['webkitAudioContext'];
-
-      if (!ac) return 0;
-
-      RA.context = new ac();
-
-      RA.numBuffers = ((latency * RA.context.sampleRate) / (1000 * RA.BUFFER_SIZE))|0;
-      if (RA.numBuffers < 2) RA.numBuffers = 2;
-
-      for (var i = 0; i < RA.numBuffers; i++) {
-         RA.buffers[i] = RA.context.createBuffer(2, RA.BUFFER_SIZE, RA.context.sampleRate);
-         RA.buffers[i].endTime = 0
-      }
-
-      RA.nonblock = false;
-      RA.startTime = 0;
-      // chrome hack to get currentTime running
-      RA.context.createGain();
-      window['setTimeout'](RA.setStartTime, 0);
-      Module["pauseMainLoop"]();
-      return 1;
-   },
-
-   RWebAudioSampleRate: function() {
-      return RA.context.sampleRate;
-   },
-
-   RWebAudioWrite: function (buf, size) {
-      RA.process();
-      var samples = size / 8;
-      var count = 0;
-
-      while (samples) {
-         if (RA.bufIndex === RA.numBuffers) {
-            if (RA.nonblock) break;
-            else RA.block();
+         for (var sample = 0; sample < readSamples; sample++) {
+            left[sample] = {{{ makeGetValue('instance.audioProcessBuffer', 'sample*8', 'float') }}};
+            right[sample] = {{{ makeGetValue('instance.audioProcessBuffer', 'sample*8+4', 'float') }}};
          }
 
-         var fill = RA.fillBuffer(buf, samples);
-         samples -= fill;
-         count += fill;
-         buf += fill * 8;
-
-         if (RA.bufOffset === RA.BUFFER_SIZE) {
-            RA.queueAudio();
+         if (instance.wakeup) {
+            var wakeup = instance.wakeup;
+            instance.wakeup = null;
+            wakeup();
          }
-      }
-
-      return count * 8;
+      },
    },
 
-   RWebAudioStop: function() {
-      RA.bufIndex = 0;
-      RA.bufOffset = 0;
-      return true;
+   ScriptProcessorNodeInit__deps: ['$Browser', 'malloc'],
+   ScriptProcessorNodeInit: function(latency, callback, userdata) {
+      var instanceNum = RA.numInstances++;
+      var instance = {};
+      instance.context = new AudioContext();
+      instance.gainNode = instance.context.createGain();
+      instance.callback = callback;
+      instance.userdata = userdata;
+      instance.wakeup = null;
+      instance.onaudioprocess = RA.onaudioprocess.bind(null, instance);
+
+      instance.scriptProcessorNode = instance.context.createScriptProcessor(4096, 0, 2);
+      instance.scriptProcessorNode.onaudioprocess = instance.onaudioprocess;
+      instance.audioProcessBuffer = _malloc(instance.scriptProcessorNode.bufferSize * 8);
+
+      instance.scriptProcessorNode.connect(instance.gainNode);
+      instance.gainNode.connect(instance.context.destination);
+
+      RA.instances[instanceNum] = instance;
+      return instanceNum;
    },
 
-   RWebAudioStart: function() {
-      return true;
+   ScriptProcessorNodeSleep__deps: ['$Asyncify'],
+   ScriptProcessorNodeSleep: function(i) {
+      var instance = RA.instances[i];
+      Asyncify.handleSleep(function(wakeUp) {
+         instance.wakeup = wakeUp;
+      });
    },
 
-   RWebAudioSetNonblockState: function(state) {
-      RA.nonblock = state;
+   ScriptProcessorNodeSampleRate: function(i) {
+      var instance = RA.instances[i];
+      return instance.context.sampleRate;
    },
 
-   RWebAudioFree: function() {
-      RA.bufIndex = 0;
-      RA.bufOffset = 0;
+   ScriptProcessorNodeStop: function(i) {
+      var instance = RA.instances[i];
+      instance.scriptProcessorNode.onaudioprocess = null;
+      instance.gainNode.gain.setValueAtTime(0, instance.context.currentTime);
    },
 
-   RWebAudioBufferSize: function() {
-      return RA.numBuffers * RA.BUFFER_SIZE * 8;
+   ScriptProcessorNodeStart: function(i) {
+      var instance = RA.instances[i];
+      instance.scriptProcessorNode.onaudioprocess = instance.onaudioprocess;
+      instance.gainNode.gain.setValueAtTime(1, instance.context.currentTime);
    },
 
-   RWebAudioWriteAvail: function() {
-      RA.process();
-      return ((RA.numBuffers - RA.bufIndex) * RA.BUFFER_SIZE - RA.bufOffset) * 8;
+   ScriptProcessorNodeFree__deps: ['free'],
+   ScriptProcessorNodeFree: function(i) {
+      var instance = RA.instances[i];
+      instance.gainNode.gain.setValueAtTime(0, instance.context.currentTime);
+      instance.scriptProcessorNode.onaudioprocess = null;
+      instance.context.close();
+      _free(instance.audioProcessBuffer);
+      delete RA.instances[i];
    },
-
-   RWebAudioRecalibrateTime: function() {
-      if (RA.startTime) {
-         RA.startTime = window['performance']['now']() - RA.context.currentTime * 1000;
-      }
-   }
 };
 
 autoAddDeps(LibraryRWebAudio, '$RA');

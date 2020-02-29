@@ -46,7 +46,6 @@
 #include "../../tasks/tasks_internal.h"
 #include "../../file_path_special.h"
 
-void RWebAudioRecalibrateTime(void);
 void dummyErrnoCodes(void);
 
 static unsigned emscripten_frame_count = 0;
@@ -55,8 +54,6 @@ static void emscripten_mainloop(void)
 {
    int ret;
    video_frame_info_t video_info;
-
-   RWebAudioRecalibrateTime();
 
    emscripten_frame_count++;
 
