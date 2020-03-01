@@ -17,42 +17,29 @@
 
 #include <boolean.h>
 
-#include <queues/fifo_queue.h>
-
 #include "../../retroarch.h"
 
 typedef size_t (*ScriptProcessorNodeCallback)(void *data, size_t bytes, void *userdata);
 
-void *ScriptProcessorNodeInit(unsigned latency, ScriptProcessorNodeCallback callback, void *userdata);
-void ScriptProcessorNodeSleep(void *instance);
+void *ScriptProcessorNodeInit(unsigned latency);
+size_t ScriptProcessorNodeWriteAvail(void *instance, bool block);
 unsigned ScriptProcessorNodeSampleRate(void *instance);
+size_t ScriptProcessorNodeBufferSize(void *instance);
+void ScriptProcessorNodeWrite(void *interface, const float *left, const float *right, size_t len);
 void ScriptProcessorNodeFree(void *instance);
 void ScriptProcessorNodeStop(void *instance);
 void ScriptProcessorNodeStart(void *instance);
+
+static float *tempLeftBuffer;
+static float *tempRightBuffer;
+static size_t tempBuffersSize;
 
 typedef struct rwebaudio_t
 {
    void *script_processor_node;
    bool nonblock;
    bool is_paused;
-
-   fifo_buffer_t *buffer;
-   size_t buffer_size;
 } rwebaudio_t;
-
-static size_t rwebaudio_audio_cb(void *data, size_t samples, void *userdata)
-{
-   rwebaudio_t *rwebaudio = (rwebaudio_t*)userdata;
-
-   size_t bytes = samples * 8;
-   size_t avail = fifo_read_avail(rwebaudio->buffer);
-   size_t read_size = bytes > avail ? avail : bytes;
-   size_t read_samples = read_size / 8;
-
-   fifo_read(rwebaudio->buffer, data, read_samples * 8);
-
-   return read_samples;
-}
 
 static void *rwebaudio_init(const char *device, unsigned rate, unsigned latency,
       unsigned block_frames,
@@ -66,14 +53,32 @@ static void *rwebaudio_init(const char *device, unsigned rate, unsigned latency,
    if (!rwebaudio)
       return NULL;
 
-   rwebaudio->script_processor_node = ScriptProcessorNodeInit(latency, rwebaudio_audio_cb, rwebaudio);
+   rwebaudio->script_processor_node = ScriptProcessorNodeInit(latency);
    *new_rate = ScriptProcessorNodeSampleRate(rwebaudio->script_processor_node);
 
-
-   rwebaudio->buffer_size = (*new_rate * latency / 1000) * 8;
-   rwebaudio->buffer = fifo_new(rwebaudio->buffer_size);
-
    return rwebaudio;
+}
+
+static void write_audio(rwebaudio_t *rwebaudio, const void *buf, size_t size)
+{
+   float *samples = (float *)buf;
+   size_t numSamples = size / sizeof(float);
+   size_t samplesPerChannel = numSamples / 2;
+
+   if (samplesPerChannel > tempBuffersSize)
+   {
+      tempBuffersSize = samplesPerChannel;
+      tempLeftBuffer = realloc(tempLeftBuffer, samplesPerChannel * sizeof(float));
+      tempRightBuffer = realloc(tempRightBuffer, samplesPerChannel * sizeof(float));
+   }
+
+   for (size_t i = 0; i < samplesPerChannel; i++)
+   {
+      tempLeftBuffer[i] = samples[i*2];
+      tempRightBuffer[i] = samples[i*2+1];
+   }
+
+   ScriptProcessorNodeWrite(rwebaudio->script_processor_node, tempLeftBuffer, tempRightBuffer, samplesPerChannel);
 }
 
 static ssize_t rwebaudio_write(void *data, const void *buf, size_t size)
@@ -84,11 +89,11 @@ static ssize_t rwebaudio_write(void *data, const void *buf, size_t size)
    {
       size_t avail, write_amt;
 
-      avail = fifo_write_avail(rwebaudio->buffer);
+      avail = ScriptProcessorNodeWriteAvail(rwebaudio->script_processor_node, false);
 
       write_amt = avail > size ? size : avail;
 
-      fifo_write(rwebaudio->buffer, buf, write_amt);
+      write_audio(rwebaudio, buf, write_amt);
       return write_amt;
    }
    else
@@ -98,16 +103,12 @@ static ssize_t rwebaudio_write(void *data, const void *buf, size_t size)
       {
          size_t avail;
 
-         avail = fifo_write_avail(rwebaudio->buffer);
+         avail = ScriptProcessorNodeWriteAvail(rwebaudio->script_processor_node, true);
 
-         if (avail == 0)
-         {
-            ScriptProcessorNodeSleep(rwebaudio->script_processor_node);
-         }
-         else
+         if (avail != 0)
          {
             size_t write_amt = size - written > avail ? avail : size - written;
-            fifo_write(rwebaudio->buffer, (const char*)buf + written, write_amt);
+            write_audio(rwebaudio, (const char*)buf + written, write_amt);
             written += write_amt;
          }
       }
@@ -143,31 +144,26 @@ static bool rwebaudio_start(void *data, bool is_shutdown)
    rwebaudio_t *rwebaudio = (rwebaudio_t*)data;
    rwebaudio->is_paused = false;
    ScriptProcessorNodeStart(rwebaudio->script_processor_node);
-
    return true;
 }
 
 static void rwebaudio_free(void *data)
 {
    rwebaudio_t *rwebaudio = (rwebaudio_t*)data;
-
-   fifo_free(rwebaudio->buffer);
    ScriptProcessorNodeFree(rwebaudio->script_processor_node);
-
    free(rwebaudio);
 }
 
 static size_t rwebaudio_write_avail(void *data)
 {
    rwebaudio_t *rwebaudio = (rwebaudio_t*)data;
-
-   return fifo_write_avail(rwebaudio->buffer);
+   return ScriptProcessorNodeWriteAvail(rwebaudio->script_processor_node, true);
 }
 
 static size_t rwebaudio_buffer_size(void *data)
 {
    rwebaudio_t *rwebaudio = (rwebaudio_t*)data;
-   return rwebaudio->buffer_size;
+   return ScriptProcessorNodeBufferSize(rwebaudio->script_processor_node);
 }
 
 static bool rwebaudio_use_float(void *data)
