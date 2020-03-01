@@ -157,7 +157,7 @@ static void rwebaudio_free(void *data)
 static size_t rwebaudio_write_avail(void *data)
 {
    rwebaudio_t *rwebaudio = (rwebaudio_t*)data;
-   return ScriptProcessorNodeWriteAvail(rwebaudio->script_processor_node, true);
+   return ScriptProcessorNodeWriteAvail(rwebaudio->script_processor_node, false);
 }
 
 static size_t rwebaudio_buffer_size(void *data)
